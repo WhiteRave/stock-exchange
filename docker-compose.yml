@@ -3,9 +3,9 @@ services:
     image: postgres:15
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -25,6 +25,10 @@ services:
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
       - --providers.docker
+      - --providers.docker.exposedbydefault=false
+      - "traefik.http.routers.app.entrypoints=websecure"
+      - "traefik.http.routers.app.tls=true"
+      - "traefik.http.routers.app.tls.certresolver=le"
       - --certificatesresolvers.le.acme.tlschallenge=true
       - --certificatesresolvers.le.acme.email=${LE_EMAIL}
       - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json

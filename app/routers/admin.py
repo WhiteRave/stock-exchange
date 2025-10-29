@@ -6,6 +6,7 @@ from app.database import get_db
 from app import crud, schemas
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete
+from app.models import User
 
 router = APIRouter(
     prefix="/admin",
@@ -23,7 +24,7 @@ async def delete_user(
     admin=Depends(admin_required),
     db: AsyncSession = Depends(get_db)
 ):
-    res = await db.execute(delete(crud.User).where(crud.User.id == user_id))
+    res = await db.execute(delete(User).where(User.id == user_id))
     if res.rowcount == 0:
         raise HTTPException(404, "User not found")
     await db.commit()

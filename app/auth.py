@@ -6,9 +6,10 @@ from sqlalchemy import select
 import secrets
 
 async def get_current_user(token: str = Header(..., alias="Authorization"), db: AsyncSession = Depends(get_db)):
-    if not token.startswith("TOKEN "):
+    scheme, _, value = token.partition(" ")
+    if scheme not in ("TOKEN", "Bearer") or not value:
         raise HTTPException(401, "Invalid auth header")
-    raw = token.split(" ", 1)[1]
+    raw = value
     res = await db.execute(select(User).where(User.token == raw))
     user = res.scalar_one_or_none()
     if not user:

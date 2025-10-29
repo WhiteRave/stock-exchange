@@ -12,10 +12,18 @@ class InstrumentType(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
+    external_id = Column(String, unique=True, index=True)  # UUID4 for API
     username = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=True)
     is_admin = Column(Boolean, default=False)
-    token = Column(String, unique=True, index=True)
+    token = Column(String, unique=True, index=True)  # api_key
+
+    class Role(str, enum.Enum):
+        USER = "USER"
+        ADMIN = "ADMIN"
+
+    role = Column(Enum(Role), default=Role.USER)
 
     balances = relationship("Balance", back_populates="user")
     orders = relationship("Order", back_populates="user")
@@ -55,6 +63,7 @@ class Side(str, enum.Enum):
 class Order(Base):
     __tablename__ = "orders"
     id = Column(Integer, primary_key=True, index=True)
+    external_id = Column(String, unique=True, index=True)  # UUID4 for API
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     instrument_id = Column(Integer, ForeignKey("instruments.id"), nullable=False)
     type = Column(Enum(OrderType), nullable=False)
