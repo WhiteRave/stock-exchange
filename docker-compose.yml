@@ -16,8 +16,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.app.rule=Host(`localhost`)"
-      - "traefik.http.routers.app.tls=true"  # Traefik будет перенаправлять HTTP -> HTTPS
-      - "traefik.http.services.app.loadbalancer.server.port=8000"  # Порт Uvicorn
+      - "traefik.http.routers.app.tls=true"
+      - "traefik.http.services.app.loadbalancer.server.port=8000"
 
   proxy:
     image: traefik:latest
@@ -37,7 +37,7 @@ services:
       - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./letsencrypt:/letsencrypt  # Для хранения сертификатов
+      - ./letsencrypt:/letsencrypt
 
 volumes:
   pgdata:
