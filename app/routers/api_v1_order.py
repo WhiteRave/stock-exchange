@@ -4,7 +4,7 @@ from sqlalchemy import select
 from decimal import Decimal
 import uuid
 import datetime
-from typing import Optional
+from typing import Optional, List, Union
 
 from app.database import get_db
 from app.auth import get_current_user
@@ -12,16 +12,20 @@ from app.models import (
     Instrument, Order, Trade, Balance,
     OrderType, OrderStatus, Side
 )
+from app import schemas
 
 router = APIRouter(prefix="/api/v1", tags=["order"])
 
+OrderResponse = Union[schemas.LimitOrder, schemas.MarketOrder]
+OrderBody = Union[schemas.LimitOrderBody, schemas.MarketOrderBody]
 
-def to_api_status(status: OrderStatus) -> str:
+
+def to_api_status(status: OrderStatus) -> schemas.OrderStatus:
     mapping = {
-        OrderStatus.NEW: "NEW",
-        OrderStatus.PARTIAL: "PARTIALLY_EXECUTED",
-        OrderStatus.FILLED: "EXECUTED",
-        OrderStatus.CANCELED: "CANCELLED",
+        OrderStatus.NEW: schemas.OrderStatus.NEW,
+        OrderStatus.PARTIAL: schemas.OrderStatus.PARTIALLY_EXECUTED,
+        OrderStatus.FILLED: schemas.OrderStatus.EXECUTED,
+        OrderStatus.CANCELED: schemas.OrderStatus.CANCELLED,
     }
     return mapping[status]
 
@@ -101,15 +105,36 @@ async def execute_against_book(db: AsyncSession, inst: Instrument, incoming: Ord
         incoming.status = OrderStatus.NEW
 
 
-@router.post("/order")
-async def create_order(body: dict, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    is_limit = "price" in body and body.get("price") is not None
-    ticker = body.get("ticker")
-    direction = body.get("direction")
-    qty = body.get("qty")
-    if not ticker or direction not in ("BUY", "SELL") or not isinstance(qty, int) or qty < 1:
-        raise HTTPException(422, "Invalid order body")
-    inst = (await db.execute(select(Instrument).where(Instrument.symbol == ticker))).scalar_one_or_none()
+def serialize_order(o: Order, user_external_id: str) -> OrderResponse:
+    base_body = {
+        "direction": schemas.Direction.BUY if o.side == Side.BUY else schemas.Direction.SELL,
+        "ticker": o.instrument.symbol,
+        "qty": int(Decimal(o.quantity)),
+    }
+    if o.type == OrderType.LIMIT:
+        body = schemas.LimitOrderBody(**base_body, price=int(Decimal(o.price or 0)))
+        return schemas.LimitOrder(
+            id=o.external_id,
+            status=to_api_status(o.status),
+            user_id=user_external_id,
+            timestamp=o.created_at,
+            body=body,
+            filled=int(Decimal(o.filled)),
+        )
+    else:
+        body = schemas.MarketOrderBody(**base_body)
+        return schemas.MarketOrder(
+            id=o.external_id,
+            status=to_api_status(o.status),
+            user_id=user_external_id,
+            timestamp=o.created_at,
+            body=body,
+        )
+
+
+@router.post("/order", response_model=schemas.CreateOrderResponse)
+async def create_order(body: OrderBody, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    inst = (await db.execute(select(Instrument).where(Instrument.symbol == body.ticker))).scalar_one_or_none()
     if not inst or not inst.is_listed:
         raise HTTPException(404, "Instrument not found or delisted")
 
@@ -117,66 +142,34 @@ async def create_order(body: dict, user=Depends(get_current_user), db: AsyncSess
         external_id=str(uuid.uuid4()),
         user_id=user.id,
         instrument_id=inst.id,
-        type=OrderType.LIMIT if is_limit else OrderType.MARKET,
-        side=Side.BUY if direction == "BUY" else Side.SELL,
-        quantity=Decimal(qty),
-        price=Decimal(body["price"]) if is_limit else None,
+        type=OrderType.LIMIT if isinstance(body, schemas.LimitOrderBody) else OrderType.MARKET,
+        side=Side.BUY if body.direction == schemas.Direction.BUY else Side.SELL,
+        quantity=Decimal(body.qty),
+        price=Decimal(body.price) if isinstance(body, schemas.LimitOrderBody) else None,
     )
     db.add(order)
     await db.flush()
 
     await execute_against_book(db, inst, order)
     await db.commit()
-    return {"success": True, "order_id": order.external_id}
+    return schemas.CreateOrderResponse(order_id=order.external_id)
 
 
-@router.get("/order")
+@router.get("/order", response_model=List[OrderResponse])
 async def list_orders(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     rows = (await db.execute(select(Order).where(Order.user_id == user.id))).scalars().all()
-    def serialize(o: Order):
-        base = {
-            "id": o.external_id,
-            "status": to_api_status(o.status),
-            "user_id": user.external_id,
-            "timestamp": o.created_at,
-            "filled": int(Decimal(o.filled)) if o.type == OrderType.LIMIT else 0,
-        }
-        body = {
-            "direction": "BUY" if o.side == Side.BUY else "SELL",
-            "ticker": o.instrument.symbol,
-            "qty": int(Decimal(o.quantity)),
-        }
-        if o.type == OrderType.LIMIT:
-            body["price"] = int(Decimal(o.price or 0))
-            base["body"] = body
-            return base
-        else:
-            base["body"] = body
-            return base
-    return [serialize(o) for o in rows]
+    return [serialize_order(o, user.external_id) for o in rows]
 
 
-@router.get("/order/{order_id}")
+@router.get("/order/{order_id}", response_model=OrderResponse)
 async def get_order(order_id: str, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     o = (await db.execute(select(Order).where(Order.external_id == order_id, Order.user_id == user.id))).scalar_one_or_none()
     if not o:
         raise HTTPException(404, "Order not found")
-    return {
-        "id": o.external_id,
-        "status": to_api_status(o.status),
-        "user_id": user.external_id,
-        "timestamp": o.created_at,
-        "body": {
-            "direction": "BUY" if o.side == Side.BUY else "SELL",
-            "ticker": o.instrument.symbol,
-            "qty": int(Decimal(o.quantity)),
-            **({"price": int(Decimal(o.price or 0))} if o.type == OrderType.LIMIT else {}),
-        },
-        **({"filled": int(Decimal(o.filled))} if o.type == OrderType.LIMIT else {}),
-    }
+    return serialize_order(o, user.external_id)
 
 
-@router.delete("/order/{order_id}")
+@router.delete("/order/{order_id}", response_model=schemas.Ok)
 async def cancel_order(order_id: str, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     o = (await db.execute(select(Order).where(Order.external_id == order_id, Order.user_id == user.id))).scalar_one_or_none()
     if not o:
@@ -185,7 +178,7 @@ async def cancel_order(order_id: str, user=Depends(get_current_user), db: AsyncS
         raise HTTPException(400, "Cannot cancel")
     o.status = OrderStatus.CANCELED
     await db.commit()
-    return {"success": True}
+    return schemas.Ok()
 
 
 

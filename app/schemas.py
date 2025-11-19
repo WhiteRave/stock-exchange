@@ -1,61 +1,138 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field, RootModel
+from typing import Optional, List, Dict, Literal
 from datetime import datetime
-from app.models import OrderType, Side, OrderStatus, InstrumentType
+from enum import Enum
 
-class TokenResponse(BaseModel):
-    token: str
 
-class UserCreate(BaseModel):
-    username: str
-    password: str
+# === Enums (match openapi.json) ===
 
-class InstrumentIn(BaseModel):
-    symbol: str
+class Direction(str, Enum):
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+class OrderStatus(str, Enum):
+    NEW = "NEW"
+    EXECUTED = "EXECUTED"
+    PARTIALLY_EXECUTED = "PARTIALLY_EXECUTED"
+    CANCELLED = "CANCELLED"
+
+
+class UserRole(str, Enum):
+    USER = "USER"
+    ADMIN = "ADMIN"
+
+
+# === Shared/simple schemas ===
+
+class Ok(BaseModel):
+    success: Literal[True] = True
+
+
+class CreateOrderResponse(BaseModel):
+    success: Literal[True] = True
+    order_id: str
+
+
+# === Public user & auth ===
+
+class NewUser(BaseModel):
+    name: str = Field(min_length=3)
+
+
+class User(BaseModel):
+    id: str  # uuid4
     name: str
-    type: InstrumentType
+    role: UserRole
+    api_key: str
 
-class InstrumentOut(BaseModel):
-    id: int
-    symbol: str
+
+# === Instrument & orderbook ===
+
+class Instrument(BaseModel):
     name: str
-    type: InstrumentType
-    is_listed: bool
+    ticker: str
 
-class BalanceOut(BaseModel):
-    instrument: str
-    amount: float
 
-class OrderCreate(BaseModel):
-    instrument: str
-    side: Side
-    type: OrderType
-    quantity: float
-    price: Optional[float]
+class Level(BaseModel):
+    price: int
+    qty: int
 
-class OrderOut(BaseModel):
-    id: int
-    instrument: str
-    side: Side
-    type: OrderType
-    quantity: float
-    filled: float
+
+class L2OrderBook(BaseModel):
+    bid_levels: List[Level]
+    ask_levels: List[Level]
+
+
+# === Orders & bodies ===
+
+class LimitOrderBody(BaseModel):
+    direction: Direction
+    ticker: str
+    qty: int = Field(ge=1)
+    price: int = Field(gt=0)
+
+
+class MarketOrderBody(BaseModel):
+    direction: Direction
+    ticker: str
+    qty: int = Field(ge=1)
+
+
+class LimitOrder(BaseModel):
+    id: str  # uuid4
     status: OrderStatus
-    price: Optional[float]
-    created_at: datetime
+    user_id: str  # uuid4
+    timestamp: datetime
+    body: LimitOrderBody
+    filled: int = 0
 
-class OrderBookSide(BaseModel):
-    price: float
-    quantity: float
 
-class OrderBookOut(BaseModel):
-    asks: List[OrderBookSide]
-    bids: List[OrderBookSide]
+class MarketOrder(BaseModel):
+    id: str  # uuid4
+    status: OrderStatus
+    user_id: str  # uuid4
+    timestamp: datetime
+    body: MarketOrderBody
 
-class Candle(BaseModel):
-    ts: datetime
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
+
+# === Transactions / history ===
+
+class Transaction(BaseModel):
+    ticker: str
+    amount: int
+    price: int
+    timestamp: datetime
+
+
+# === Balances ===
+
+class BalanceMap(RootModel[Dict[str, int]]):
+    pass
+
+
+# === Admin balance bodies ===
+
+class Body_deposit_api_v1_admin_balance_deposit_post(BaseModel):
+    user_id: str  # uuid
+    ticker: str
+    amount: int = Field(gt=0)
+
+
+class Body_withdraw_api_v1_admin_balance_withdraw_post(BaseModel):
+    user_id: str  # uuid
+    ticker: str
+    amount: int = Field(gt=0)
+
+
+# === Validation errors (for completeness with openapi.json) ===
+
+class ValidationError(BaseModel):
+    loc: List[object]
+    msg: str
+    type: str
+
+
+class HTTPValidationError(BaseModel):
+    detail: Optional[List[ValidationError]] = None
+
